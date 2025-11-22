@@ -137,6 +137,27 @@ In short, E-X FraudShield transforms fraud detection from a mysterious “black 
 
 E-X FraudShield doesn’t just detect fraud — it builds trust. It’s proof that in the future of banking, transparency and ethics can be as powerful as technology itself.
 
+## Dynamic Dashboard Features
+
+The Streamlit application now renders live, reactive components driven by the decision log files:
+
+- Live Fraud Metrics: Totals, flagged count, fraud rate, last probability & last prediction refresh automatically on any interaction (e.g. new transaction check).
+- Probability Trend: Line chart of recent risk probabilities (last 200 decisions) for quick drift / volatility inspection.
+- SHAP Contributions (Current): Bar chart for the most recent transaction showing per-feature impact.
+- SHAP Aggregate (Recent): Rolling mean absolute SHAP across the latest decisions to surface persistently influential features.
+- Unified Log Loaders: Centralized helpers in `integrations/live_metrics.py` parse JSONL or CSV fallbacks for robustness.
+
+### How to See Live Updates
+1. Open the app (`python app.py` or `streamlit run app.py`).
+2. Navigate to the "Transaction Check" tab.
+3. Press "Check Transaction" repeatedly with varied inputs — metrics & charts update immediately.
+4. Switch to the "AI Governance Logs" tab to inspect consolidated decision entries and reply logs.
+
+No external database is required; JSONL files are appended incrementally for lightweight local development. For higher concurrency or retention, swap the loaders for a SQLite / PostgreSQL adapter.
+
+### Extending Reactivity Further
+To add timed auto-refresh (e.g. every 5–10 seconds) you can wrap sections with `st.experimental_rerun()` logic or adopt a small polling script. The current implementation favors simplicity and avoids constant background refresh to reduce resource usage.
+
 ## SMS providers and setup
 
 The project supports three notification SMS paths (tried in order):

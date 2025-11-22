@@ -21,6 +21,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 import shap
+import plotly.express as px
 import time
 import uuid
 import os
@@ -28,6 +29,13 @@ import json
 import re
 from datetime import datetime
 from dotenv import load_dotenv
+from integrations.live_metrics import (
+    load_decision_logs,
+    compute_metrics,
+    build_probability_timeseries,
+    build_shap_aggregate,
+    load_reply_logs,
+)
 import config as cfg
 from integrations.db_adapters import get_db_adapter
 from integrations.notify_providers import get_notify_provider
@@ -343,6 +351,17 @@ with tabs[0]:
     left, right = st.columns([1,2])
     with left:
         st.subheader("Transaction Inputs")
+        # Decision threshold slider (stored in session state)
+        if 'decision_threshold' not in st.session_state:
+            st.session_state['decision_threshold'] = 0.50
+        st.slider(
+            "Decision Threshold (flag if probability ≥ threshold)",
+            min_value=0.05,
+            max_value=0.95,
+            value=float(st.session_state['decision_threshold']),
+            step=0.01,
+            key='decision_threshold'
+        )
         inputs = {}
         privacy = {}
         def ask(label):
@@ -423,7 +442,9 @@ with tabs[0]:
             with st.spinner("Analyzing..."):
                 time.sleep(1)
                 prob = float(model.predict_proba(row)[0][1])
-                pred = int(model.predict(row)[0])
+                # Apply adjustable threshold instead of model's internal class output
+                threshold = float(st.session_state.get('decision_threshold', 0.5))
+                pred = 1 if prob >= threshold else 0
                 raw = explainer.shap_values(row)
                 arr = np.array(raw, dtype=object)
                 if isinstance(raw, list):
@@ -462,89 +483,73 @@ with tabs[0]:
                 expl = generate_explanation(r["shap"], feature_names, dict(zip(feature_names, r["inp"])) )
                 st.subheader("Explanation")
                 st.markdown(expl)
-                st.subheader("SHAP Contributions")
+                st.subheader("SHAP Contributions (Current Transaction)")
                 sdf = pd.DataFrame({"Feature": feature_names, "SHAP": np.round(r["shap"],4)})
-                st.dataframe(sdf.sort_values("SHAP", ascending=False), width="stretch")
+                bar_fig = px.bar(
+                    sdf.sort_values("SHAP", ascending=False),
+                    x="Feature",
+                    y="SHAP",
+                    title=f"Per-Feature SHAP (Threshold {st.session_state.get('decision_threshold',0.5):.2f})",
+                    height=300
+                )
+                st.plotly_chart(bar_fig, use_container_width=True)
+                st.dataframe(sdf.sort_values("SHAP", ascending=False), use_container_width=True)
+            # Live metrics (always render, even if no transaction yet)
+            st.markdown("---")
+            st.subheader("Live Fraud Metrics")
+            logs_df = load_decision_logs(limit=500)
+            metrics = compute_metrics(logs_df)
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Total Decisions", metrics["total"])
+            m2.metric("Model Fraud (logged)", metrics["fraud_count"], f"{metrics['fraud_rate']*100:.1f}%" if metrics["total"] else None)
+            # Projected flagged given adjustable threshold using stored probabilities
+            logs_probs = load_decision_logs(limit=1000)
+            projected = 0
+            if not logs_probs.empty and 'probability' in logs_probs.columns:
+                thr = float(st.session_state.get('decision_threshold', 0.5))
+                projected = int((logs_probs['probability'] >= thr).sum())
+            m3.metric("Projected Flags @ Threshold", projected)
+            if metrics["last_probability"] is not None:
+                m4.metric("Last Probability", f"{metrics['last_probability']*100:.2f}%")
+            if metrics["last_is_fraud"] is not None:
+                m5.metric("Last Pred (orig)", "FRAUD" if metrics["last_is_fraud"]==1 else "OK")
+            prob_ts = build_probability_timeseries(logs_df, limit=200)
+            if not prob_ts.empty:
+                ts_fig = px.line(prob_ts, x="Index", y="Probability", title="Recent Risk Probabilities")
+                st.plotly_chart(ts_fig, use_container_width=True)
+            shap_agg = build_shap_aggregate(logs_df, limit=400)
+            if not shap_agg.empty:
+                st.subheader("Top Mean Absolute SHAP (Recent Decisions)")
+                shap_fig = px.bar(shap_agg.head(15), x="FeatureIndex", y="MeanAbsSHAP", title="Feature Influence (Mean Abs SHAP)")
+                st.plotly_chart(shap_fig, use_container_width=True)
+            else:
+                st.caption("SHAP trend not available yet (insufficient decisions).")
                 # Notification & reply tracking removed.
 with tabs[1]:
     # Delegate full rendering to the reusable module function.
     bias_monitoring.render_bias_monitoring_page()
 with tabs[2]:
     st.header("AI Governance Logs")
-    # show model decision logs
-    # prefer JSONL logs
-    if os.path.exists(LOG_JSONL):
-        try:
-            with open(LOG_JSONL, 'r', encoding='utf-8') as f:
-                lines = [json.loads(l) for l in f if l.strip()]
-            logs = pd.DataFrame(lines)
-            st.subheader('Decision Logs (JSONL)')
-            st.dataframe(logs)
-        except Exception as e:
-            st.error(f"Failed to parse `{LOG_JSONL}`: {e}")
-            try:
-                with open(LOG_JSONL, 'r', encoding='utf-8', errors='replace') as f:
-                    sample = f.read(2000)
-                st.code(sample)
-            except Exception:
-                st.warning('Could not read log file contents.')
-    elif os.path.exists(LOG_CSV):
-        try:
-            logs = pd.read_csv(LOG_CSV)
-            st.subheader('Decision Logs (CSV)')
-            st.dataframe(logs)
-        except Exception as e:
-            st.error(f"Failed to parse `{LOG_CSV}`: {e}")
-            try:
-                with open(LOG_CSV, 'r', encoding='utf-8', errors='replace') as f:
-                    sample = f.read(2000)
-                st.code(sample)
-            except Exception:
-                st.warning('Could not read log file contents.')
-    else:
+    logs = load_decision_logs(limit=1000)
+    if logs.empty:
         st.info("No decision logs available.")
-
-    st.info('Notification feature disabled; notification logs removed.')
-
-    # show replies
-    # replies JSONL preferred
-    # prefer new replies JSONL name, then legacy, then CSV
-    replies_to_show = None
-    if os.path.exists(REPLIES_JSONL):
-        replies_to_show = REPLIES_JSONL
-    elif os.path.exists(REPLIES_JSONL_LEGACY):
-        replies_to_show = REPLIES_JSONL_LEGACY
-    if replies_to_show:
-        try:
-            with open(replies_to_show, 'r', encoding='utf-8') as f:
-                lines = [json.loads(l) for l in f if l.strip()]
-            st.subheader('Customer Replies (JSONL)')
-            st.dataframe(pd.DataFrame(lines))
-        except Exception as e:
-            st.error(f"Failed to parse replies file: {e}")
-            try:
-                with open(replies_to_show, 'r', encoding='utf-8', errors='replace') as f:
-                    sample = f.read(2000)
-                st.code(sample)
-            except Exception:
-                st.warning('Could not read replies file contents.')
-    elif os.path.exists(REPLIES_CSV):
-        try:
-            st.subheader('Customer Replies (CSV)')
-            reps = pd.read_csv(REPLIES_CSV)
-            st.dataframe(reps)
-        except Exception as e:
-            st.error(f"Failed to parse replies file: {e}")
-            try:
-                with open(REPLIES_CSV, 'r', encoding='utf-8', errors='replace') as f:
-                    sample = f.read(2000)
-                st.code(sample)
-            except Exception:
-                st.warning('Could not read replies file contents.')
     else:
+        st.subheader("Decision Logs (Latest)")
+        st.dataframe(logs, use_container_width=True)
+        # Mini summary
+        summary = compute_metrics(logs)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total", summary["total"])
+        c2.metric("Fraud", summary["fraud_count"], f"{summary['fraud_rate']*100:.1f}%")
+        if summary["last_probability"] is not None:
+            c3.metric("Last Prob", f"{summary['last_probability']*100:.1f}%")
+    st.info('Notification feature disabled; notification logs removed.')
+    replies_df = load_reply_logs(limit=500)
+    if replies_df.empty:
         st.info('No customer replies recorded yet.')
-
-    # Test notification sender removed.
+    else:
+        st.subheader('Customer Replies (Latest)')
+        st.dataframe(replies_df, use_container_width=True)
 
 with tabs[3]:
     st.header('Users')
