@@ -1,0 +1,51 @@
+version: '3.8'
+services:
+  fraudshield:
+    build: .
+    container_name: fraudshield
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+version: '3.8'
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: exfraudshield-backend:latest
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_BACKEND: sqlite
+      SMS_PROVIDER: mock
+      RATE_LIMIT_SECONDS: '60'
+      FRONTEND_URL: http://localhost:3000
+      PYTHONUNBUFFERED: '1'
+    volumes:
+      - ./backend:/app
+      - ./logs:/app/logs
+    command: bash -lc "uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  mock-backend:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./backend_mock:/app
+    ports:
+      - "8001:8000"
+    command: bash -lc "npm install --no-audit --no-fund && node server.js"
+
+  frontend:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    command: bash -lc "npm install --legacy-peer-deps --no-audit --no-fund && npm run dev -- --host 0.0.0.0"

@@ -1,0 +1,7 @@
+timestamp,transaction_id,method,contact,message
+2025-11-20 14:58:55,,log,+10000000000,Test fraud alert message
+2025-11-20 15:33:01,test-4406d303-1e91-4cd2-9238-5a5e850706d0,SMS,9910764094,Test alert for transaction test-4406d303-1e91-4cd2-9238-5a5e850706d0. This is a test.
+2025-11-20 19:15:31,test-fec69f89-54eb-4197-8be3-d1b5c4bafdf3,SMS,9910764094,Test alert for transaction test-fec69f89-54eb-4197-8be3-d1b5c4bafdf3. This is a test.
+2025-11-20 19:29:12,66c9be81-08d7-4f3e-8b37-bdbe8aa6b0b5,log,9910764094,Alert: Transaction 66c9be81-08d7-4f3e-8b37-bdbe8aa6b0b5 flagged as suspicious (risk 55.7%). Reply YES if this was you.
+2025-11-20 19:29:40,74211785-e71d-4d5b-8e1a-c90b95094a1c,log,9910764094,Alert: Transaction 74211785-e71d-4d5b-8e1a-c90b95094a1c flagged as suspicious (risk 55.7%). Reply YES if this was you.
+2025-11-20 20:20:05,test-4a109d55-a1b8-4427-b041-8c2063e78a6d,SMS,9910764094,Test alert for transaction test-4a109d55-a1b8-4427-b041-8c2063e78a6d. This is a test.

@@ -1,0 +1,12 @@
+streamlit==1.30.0
+pandas==2.0.3
+numpy==1.26.2
+scikit-learn==1.2.2
+plotly==5.15.0
+xgboost==1.7.6
+
+# Optional extras (uncomment as needed):
+# shap
+# python-dotenv
+# requests
+# phonenumbers
